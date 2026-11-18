@@ -1,0 +1,71 @@
+id: payroll-example
+version: 1
+seller:
+  name: PayLoop
+  domain: example.com
+  one_line_offer: Payroll and compliance filing software for Indian startups with 20 to 150 employees.
+  sender_name: Growth Lead
+  sender_title: PayLoop
+  allowed_claims:
+    - PayLoop runs payroll and statutory filings for Indian startups.
+  ask: Open to a 15-minute call to compare how you run payroll today?
+icp_summary: An Indian software or services startup of 20-150 people hiring steadily and still running payroll by spreadsheet or a basic tool.
+custom_fields:
+  - name: india_presence
+    type: bool
+    description: True if the company has an office, entity or team in India.
+  - name: hiring_surge
+    type: bool
+    description: True if there are ten or more open roles.
+gates:
+  - id: G1
+    question: Does the company operate in India?
+    kind: classification
+    pass_when: An India office, entity, team or Indian cities are mentioned.
+    fail_when: No India presence at all.
+    required_fields: [india_presence]
+    where_to_look: [homepage, careers, about]
+    unknown_policy: { type: drop }
+  - id: G2
+    question: Is the company in the 20 to 150 employee band?
+    kind: stage
+    pass_when: Headcount range overlaps 20 to 150.
+    fail_when: Clearly under 10 or over 500.
+    required_fields: [headcount_min]
+    where_to_look: [about, careers]
+    unknown_policy: { type: qualify_and_flag, flag: size_unconfirmed }
+signals:
+  - id: S1
+    passes_when: Ten or more open roles.
+    weight: 60
+    unanswered: ignore
+  - id: S2
+    passes_when: Funded startup with a named round.
+    weight: 40
+    unanswered: ignore
+soft_pass_penalty: 0
+personas:
+  - tier: 1
+    titles: [Head of People, Head of HR, HR Manager, CHRO, Finance Head, Head of Finance, CFO]
+    exclude_titles: [assistant, intern, former, recruiter]
+    applies_when: always
+    pain_lens:
+      - monthly payroll takes days of manual work
+      - statutory filing deadlines and penalties
+  - tier: 2
+    titles: [CEO, Co-founder, Founder]
+    exclude_titles: [assistant, intern, former]
+    applies_when: { headcount_below: 60 }
+    pain_lens:
+      - founder time spent on payroll admin
+      - hiring faster than payroll process can scale
+email:
+  min_words: 60
+  max_words: 110
+  subject_max_words: 7
+  banned_phrases: [revolutionise, seamless, supercharge, game-changer, synergy, leverage, touch base, circle back]
+  question_hook_when_flagged: true
+limits:
+  fetch_calls: 4
+  news_calls: 2
+  hunter_min_confidence: 70

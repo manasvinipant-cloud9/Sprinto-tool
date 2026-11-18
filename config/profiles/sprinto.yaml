@@ -1,0 +1,122 @@
+id: sprinto
+version: 1
+seller:
+  name: Sprinto
+  domain: sprinto.com
+  one_line_offer: Automates compliance certification (SOC 2, ISO 27001, GDPR) for SaaS companies.
+  sender_name: Growth Lead
+  sender_title: Sprinto
+  allowed_claims:
+    - Sprinto automates evidence collection and audit readiness for SOC 2, ISO 27001 and GDPR.
+    - Sprinto helps SaaS teams get certified without building a dedicated compliance team.
+  ask: Would a short call this week be useful to see how it would work for you?
+  tone_notes: Plain, specific, respectful of a busy engineer or founder. No hype.
+icp_summary: A Series A-C SaaS company of roughly 50-200 people under audit pressure from enterprise customers, with no dedicated GRC team yet.
+custom_fields:
+  - name: certifications_held
+    type: string
+    description: Any SOC 2 or ISO 27001 certification, badge, report or "compliant" claim stated on the page (empty if none seen).
+  - name: certification_in_progress
+    type: bool
+    description: True if the page says SOC 2 or ISO 27001 is in progress or planned.
+  - name: has_enterprise_tier
+    type: bool
+    description: True if there is an enterprise pricing tier or a contact-sales plan.
+  - name: security_or_compliance_roles_open
+    type: bool
+    description: True if there is an open security, GRC or compliance role.
+gates:
+  - id: G0
+    question: Is the company free of an existing SOC 2 or ISO 27001 certification?
+    kind: exclusion
+    pass_when: No SOC 2 or ISO 27001 certification, report or badge is stated anywhere found.
+    fail_when: A named SOC 2 or ISO 27001 certification is present.
+    required_fields: [certifications_held]
+    where_to_look: [security, trust, homepage]
+    unknown_policy: { type: qualify_and_flag, flag: cert_unverified }
+  - id: G1
+    question: Is it a B2B SaaS company?
+    kind: classification
+    pass_when: Recurring pricing, or a login or free-trial link, or a description naming a business buyer and a software product.
+    fail_when: Agency, services firm, consumer product, marketplace for consumers, or hardware.
+    required_fields: [company_type, pricing_model]
+    where_to_look: [homepage, pricing, product]
+    unknown_policy: { type: drop }
+  - id: G2
+    question: Is it at Series A, B or C?
+    kind: stage
+    pass_when: A named Series A, B or C round is found in press or news.
+    fail_when: Seed or pre-seed, Series D or later, public, acquired, or bootstrapped and never raised.
+    required_fields: [funding_stage]
+    where_to_look: [news_search, careers, about]
+    unknown_policy:
+      type: soft_pass_if
+      flag: stage_inferred
+      min: 2
+      proxies:
+        - { id: headcount_50_200, field: headcount_min, op: gte, value: 50 }
+        - { id: open_roles_5, field: open_roles_count, op: gte, value: 5 }
+        - { id: enterprise_tier, field: has_enterprise_tier, op: truthy }
+        - { id: enterprise_customers_2, field: enterprise_customers, op: count_gte, value: 2 }
+  - id: G3
+    question: Is there audit pressure?
+    kind: signal_present
+    pass_when: SOC 2 or ISO 27001 in progress, or an open security, GRC or compliance role, or an enterprise tier with no certification badge.
+    required_fields: [certification_in_progress, security_or_compliance_roles_open, has_enterprise_tier]
+    where_to_look: [careers, security, pricing]
+    unknown_policy: { type: qualify_and_flag, flag: audit_pressure_unconfirmed }
+signals:
+  - id: S1
+    passes_when: Headcount range overlaps 50 to 200.
+    weight: 34
+    unanswered: flag
+  - id: S2
+    passes_when: Two or more recognisable enterprise customers, or an enterprise case study, or clearly selling into the US or EU.
+    weight: 33
+    unanswered: ignore
+  - id: S3
+    passes_when: Industry tier. Use tier fintech or healthtech, devtools or hrtech, or other.
+    weight: 33
+    tiers: { fintech_or_healthtech: 33, devtools_or_hrtech: 20, other: 10 }
+    unanswered: ignore
+  - id: S4
+    passes_when: AWS, GCP or Azure is named on a subprocessor list, DPA, docs or job posts.
+    weight: 0
+    hook_only: true
+    unanswered: ignore
+soft_pass_penalty: 10
+personas:
+  - tier: 1
+    titles: [Head of Security, CISO, Chief Information Security Officer, Compliance Lead, GRC Lead, Head of GRC, Security Lead, Head of Compliance, Director of Security]
+    exclude_titles: [assistant, intern, former, recruiter, marketing, sales]
+    applies_when: always
+    pain_lens:
+      - evidence collection spread across many tools
+      - keeping audit readiness current
+      - coordinating with auditors
+  - tier: 2
+    titles: [CTO, Chief Technology Officer, VP Engineering, VP of Engineering, Head of Engineering, Director of Engineering]
+    exclude_titles: [assistant, intern, former, recruiter, marketing, sales, engineering manager]
+    applies_when: always
+    pain_lens:
+      - engineers pulled off the roadmap to gather audit evidence
+      - an enterprise deal waiting on a security questionnaire
+      - no named owner for compliance
+  - tier: 3
+    titles: [CEO, Co-founder, Founder]
+    exclude_titles: [assistant, intern, former]
+    applies_when: { headcount_below: 80 }
+    pain_lens:
+      - a deal stalled at security review
+      - time and cost of certification against a sales deadline
+      - certification as a revenue unlock
+email:
+  min_words: 70
+  max_words: 120
+  subject_max_words: 7
+  banned_phrases: [revolutionise, revolutionize, seamless, supercharge, game-changer, game changer, synergy, leverage, touch base, circle back, quick question]
+  question_hook_when_flagged: true
+limits:
+  fetch_calls: 4
+  news_calls: 3
+  hunter_min_confidence: 70
