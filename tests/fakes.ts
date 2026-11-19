@@ -64,7 +64,7 @@ export function makeLLM(s: Scenario, log: string[] = []): LLM {
   };
 }
 
-export function makeDeps(s: Scenario, opts: { sent?: { subject: string; body: string }[]; calls?: string[]; page?: Partial<PageResult> } = {}): Deps {
+export function makeDeps(s: Scenario, opts: { calls?: string[]; page?: Partial<PageResult> } = {}): Deps {
   const llm = makeLLM(s);
   return {
     llm,
@@ -81,10 +81,6 @@ export function makeDeps(s: Scenario, opts: { sent?: { subject: string; body: st
       return s.contacts;
     },
     overrides: () => s.overrides ?? {},
-    async send(subject, body) {
-      opts.sent?.push({ subject, body });
-      return { ok: true, message: "sent" };
-    },
   };
 }
 
@@ -99,3 +95,16 @@ export const QUALIFYING: Scenario = {
   action: "stop",
   contacts: [{ name: "Priya Rao", email: "priya@acme.test", title: "CTO", confidence: 88 }],
 };
+
+/** Wraps a fake model so every call costs tokens, to exercise the token budget. */
+export function withTokens(llm: LLM, perCall: number): LLM {
+  return {
+    usage: llm.usage,
+    async json(o) {
+      const out = await llm.json(o);
+      llm.usage.prompt += Math.round(perCall * 0.8);
+      llm.usage.output += Math.round(perCall * 0.2);
+      return out;
+    },
+  };
+}

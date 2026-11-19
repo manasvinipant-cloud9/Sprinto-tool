@@ -1,22 +1,15 @@
-import { checkAuth } from "@/lib/auth";
+import { withAuth } from "@/lib/guard";
 import { hunterAccount } from "@/lib/poc";
+import { resolveKeys } from "@/lib/services/workspace";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  const denied = checkAuth(req);
-  if (denied) return denied;
-  const configured = {
-    llm: Boolean((process.env.LLM_PROVIDER || "gemini") === "anthropic" ? process.env.ANTHROPIC_API_KEY : process.env.GEMINI_API_KEY),
-    hunter: Boolean(process.env.HUNTER_API_KEY),
-    gmail: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN),
-    send_to: Boolean(process.env.SEND_TO),
-  };
-  let hunter: { used: number | null; available: number | null } | null = null;
-  try {
-    hunter = await hunterAccount();
-  } catch {
-    hunter = null;
-  }
-  return Response.json({ configured, hunter });
+  return withAuth(req, async () => {
+    const keys = await resolveKeys();
+    const configured = { llm: keys.has.llm, hunter: keys.has.hunter, database: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) };
+    let hunter: { used: number | null; available: number | null } | null = null;
+    try { hunter = keys.has.hunter ? await hunterAccount(keys.hunter) : null; } catch { hunter = null; }
+    return Response.json({ configured, hunter });
+  });
 }

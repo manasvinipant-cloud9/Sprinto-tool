@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { createHash } from "node:crypto";
 
 export const PAGE_TYPES = [
   "homepage", "security", "trust", "careers", "pricing", "customers",
@@ -49,6 +48,16 @@ const gate = z.object({
   unknown_policy: unknownPolicy,
 });
 
+const onUnknown = z.enum(["drop", "flag", "ignore"]).default("flag");
+
+/** Hard disqualifiers: checked by code against extracted facts, never by the model. */
+export const disqualifierSchema = z.discriminatedUnion("type", [
+  z.object({ id: z.string().min(1), type: z.literal("region_in"), regions: z.array(z.string().min(1)).min(1), on_unknown: onUnknown }),
+  z.object({ id: z.string().min(1), type: z.literal("headcount_between"), min: z.number().int().min(0).optional(), max: z.number().int().min(1).optional(), on_unknown: onUnknown }),
+  z.object({ id: z.string().min(1), type: z.literal("industry_not_in"), industries: z.array(z.string().min(1)).min(1), on_unknown: onUnknown }),
+]);
+export type Disqualifier = z.infer<typeof disqualifierSchema>;
+
 const signal = z.object({
   id: z.string(),
   passes_when: z.string(),
@@ -91,7 +100,8 @@ export const profileSchema = z
         }),
       )
       .default([]),
-    gates: z.array(gate).min(2).max(4),
+    disqualifiers: z.array(disqualifierSchema).max(6).default([]),
+    gates: z.array(gate).max(4).default([]),
     signals: z.array(signal).max(5),
     soft_pass_penalty: z.number().min(0).default(0),
     personas: z.array(persona).min(1),
@@ -106,9 +116,23 @@ export const profileSchema = z
       fetch_calls: z.number().int().min(1).max(8),
       news_calls: z.number().int().min(0).max(5),
       hunter_min_confidence: z.number().min(0).max(100),
+      max_accounts_per_run: z.number().int().min(1).max(100).default(25),
+      max_contacts_per_account: z.number().int().min(1).max(20).default(10),
+      max_loop_steps: z.number().int().min(1).max(40).default(12),
+      max_tokens_per_account: z.number().int().min(1000).max(500000).default(60000),
     }),
   })
   .superRefine((p, ctx) => {
+    if (p.gates.length + p.disqualifiers.length < 2) {
+      ctx.addIssue({ code: "custom", path: ["gates"], message: "Add at least two checks in total (hard disqualifiers plus fit gates)" });
+    }
+    const dqIds = new Set<string>();
+    for (const d of p.disqualifiers) {
+      if (dqIds.has(d.id)) ctx.addIssue({ code: "custom", path: ["disqualifiers"], message: `Duplicate disqualifier id ${d.id}` });
+      dqIds.add(d.id);
+      if (d.type === "headcount_between" && d.min === undefined && d.max === undefined) ctx.addIssue({ code: "custom", path: ["disqualifiers"], message: `${d.id}: set a minimum, a maximum, or both` });
+      if (d.type === "headcount_between" && d.min !== undefined && d.max !== undefined && d.min > d.max) ctx.addIssue({ code: "custom", path: ["disqualifiers"], message: `${d.id}: minimum is above maximum` });
+    }
     const total = p.signals.filter((s) => !s.hook_only).reduce((a, s) => a + s.weight, 0);
     if (total !== 100) {
       ctx.addIssue({ code: "custom", message: `Scoring signal weights must sum to 100 (got ${total})` });
@@ -125,6 +149,3 @@ export type Gate = Profile["gates"][number];
 export type Signal = Profile["signals"][number];
 export type Persona = Profile["personas"][number];
 
-export function profileHash(p: Profile): string {
-  return createHash("sha256").update(JSON.stringify(p)).digest("hex").slice(0, 12);
-}

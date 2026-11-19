@@ -5,6 +5,9 @@ import { extractFacts, isFilled, type Evidence } from "./extract";
 import { Budget, summariseNews, TOOL_DESCRIPTIONS, type NewsResult } from "./tools";
 import type { PageResult } from "./scrape";
 import type { Facts, GateAnswer, GateResult, ToolCall } from "./types";
+import { CapError, type Governor } from "./governor";
+import { refsFor } from "./evidence";
+import { clip, type Tracer } from "./trace";
 
 export interface LoopDeps {
   llm: LLM;
@@ -23,6 +26,10 @@ export interface LoopState {
   blocked: Set<string>;
   gates: GateResult[];
   flags: string[];
+  gov?: Governor;
+  tracer?: Tracer;
+  /** Set when a spending cap stopped research. Remaining gates are recorded as skipped. */
+  cap?: { reason: string; detail: string } | null;
   softPass: boolean;
   outcome: "qualify" | "qualify_and_flag" | "drop" | null;
   dropReason: string | null;
@@ -89,11 +96,13 @@ async function chooseAction(deps: LoopDeps, gate: Gate, state: LoopState, cands:
 
 async function runTool(deps: LoopDeps, state: LoopState, c: Candidate, gate: Gate): Promise<void> {
   const t0 = Date.now();
+  state.gov?.step(c.kind === "fetch_page" ? "fetch" : "search");
   if (c.kind === "fetch_page") {
     state.budget.fetches++;
     state.fetched.add(c.arg);
     const r = await deps.fetchPage(c.arg);
     state.toolCalls.push({ tool: "fetch_page", arg: c.arg, status: r.status, ms: Date.now() - t0, words: r.words, note: r.note });
+    state.tracer?.add({ kind: "fetch_page", label: `loop step ${state.gov?.steps ?? "?"}: read page`, input: c.arg, output: `${r.status}${r.note ? ` (${r.note})` : ""}, ${r.words ?? 0} words`, status: r.status, ms: Date.now() - t0, tokens_in: 0, tokens_out: 0 });
     if (r.status === "blocked" || r.status === "robots_disallowed") state.blocked.add(c.arg);
     if (r.status === "ok") {
       await extractFacts(deps.llm, state.profile, r.text, c.arg, state.facts, state.evidence);
@@ -102,6 +111,7 @@ async function runTool(deps: LoopDeps, state: LoopState, c: Candidate, gate: Gat
     state.budget.news++;
     const r = await deps.searchNews(c.arg);
     state.toolCalls.push({ tool: "search_news", arg: c.arg, status: r.status, ms: Date.now() - t0, note: r.note });
+    state.tracer?.add({ kind: "search_news", label: `loop step ${state.gov?.steps ?? "?"}: news search`, input: c.arg, output: `${r.status}${r.note ? ` (${r.note})` : ""}, ${r.results.length} headline(s)`, status: r.status, ms: Date.now() - t0, tokens_in: 0, tokens_out: 0 });
     if (r.status === "ok") {
       await extractFacts(deps.llm, state.profile, "NEWS RESULTS\n" + summariseNews(r), "news:" + c.arg, state.facts, state.evidence);
     }
@@ -136,63 +146,99 @@ export function proxyHolds(p: { field: string; op: string; value?: number }, fac
   }
 }
 
+/** Records a gate decision in the results and in the decision trace. */
+function pushGate(state: LoopState, r: GateResult) {
+  state.gates.push(r);
+  state.tracer?.add({ kind: "gate", ctx: r.id, label: "gate decision", input: r.question, output: clip(`${r.answer.toUpperCase()}: ${r.evidence}${r.policy_applied ? ` [policy: ${r.policy_applied}]` : ""}`, 600), status: r.answer, ms: 0, tokens_in: 0, tokens_out: 0 });
+}
+
+function skipped(gate: Gate, state: LoopState, attempts: number): GateResult {
+  const why = state.cap ? `${state.cap.reason}: ${state.cap.detail}` : "cap reached";
+  return { id: gate.id, question: gate.question, answer: "skipped_due_to_cap", evidence: `Not evaluated (${why}).`, attempts, refs: [], policy_applied: `cap:${state.cap?.reason ?? "unknown"}` };
+}
+
+function capFrom(e: CapError, state: LoopState) {
+  const g = state.gov;
+  state.cap = e.reason === "token_budget"
+    ? { reason: "token_budget", detail: `used ${g?.tokens ?? "?"} of ${g?.maxTokens ?? "?"} tokens` }
+    : { reason: "loop_steps", detail: `used ${g?.steps ?? "?"} of ${g?.maxSteps ?? "?"} loop steps` };
+}
+
 export async function runGates(deps: LoopDeps, state: LoopState): Promise<void> {
   for (const gate of state.profile.gates) {
+    if (state.tracer) state.tracer.ctx = gate.id;
+    if (state.cap) { pushGate(state, skipped(gate, state, 0)); continue; }
     let attempts = 0;
-    while (!isResolved(gate, state.facts)) {
-      const cands = candidatesFor(gate, state);
-      const choice = await chooseAction(deps, gate, state, cands);
-      if (!choice) break;
-      await runTool(deps, state, choice, gate);
-      attempts++;
-    }
-
-    let answer: GateAnswer = "unknown";
-    let evidence = "No required facts were found within the call budget.";
-    if (anyFilled(gate, state.facts)) {
-      const j = await judge(deps, gate, state);
-      answer = j.answer;
-      evidence = j.evidence;
-    }
-    const source = gate.required_fields.map((f) => state.evidence[f]?.url).find(Boolean);
-    const result: GateResult = { id: gate.id, question: gate.question, answer, evidence, source_url: source, attempts };
-
-    if (answer === "fail") {
-      state.gates.push(result);
-      state.outcome = "drop";
-      state.dropReason = `${gate.id}_fail`;
-      return;
-    }
-    if (answer === "unknown") {
-      const pol = gate.unknown_policy;
-      if (pol.type === "drop") {
-        result.policy_applied = "drop";
-        state.gates.push(result);
-        state.outcome = "drop";
-        state.dropReason = `${gate.id}_unresolved`;
-        return;
+    try {
+      while (!isResolved(gate, state.facts)) {
+        const cands = candidatesFor(gate, state);
+        if (cands.length > 0 && state.gov && !state.gov.canStep()) { throw new CapError("loop_steps"); }
+        const choice = await chooseAction(deps, gate, state, cands);
+        if (!choice) break;
+        await runTool(deps, state, choice, gate);
+        attempts++;
       }
-      if (pol.type === "qualify_and_flag") {
-        result.policy_applied = `qualify_and_flag:${pol.flag}`;
-        state.flags.push(pol.flag);
-      } else {
-        const held = pol.proxies.filter((p) => proxyHolds(p, state.facts));
-        if (held.length >= pol.min) {
-          result.policy_applied = `soft_pass:${held.map((p) => p.id).join("+")}`;
-          result.evidence += ` Soft pass on proxies: ${held.map((p) => p.id).join(", ")}.`;
-          state.flags.push(pol.flag);
-          state.softPass = true;
-        } else {
-          result.policy_applied = "drop";
-          state.gates.push(result);
-          state.outcome = "drop";
-          state.dropReason = `${gate.id}_unresolved`;
-          return;
-        }
-      }
+      const res = await evaluateGate(deps, gate, state, attempts);
+      if (res === "stop") return;
+    } catch (e) {
+      if (!(e instanceof CapError)) throw e;
+      state.gov?.markStepCap();
+      capFrom(e, state);
+      pushGate(state, skipped(gate, state, attempts));
     }
-    state.gates.push(result);
   }
+  if (state.tracer) state.tracer.ctx = undefined;
+  if (state.cap) return;
   const unknownFlagged = state.gates.some((g) => g.answer === "unknown" && g.policy_applied?.startsWith("qualify_and_flag"));
   state.outcome = unknownFlagged ? "qualify_and_flag" : "qualify";
+}
+
+/** Judges one gate and applies its unknown policy. Returns "stop" when the account is dropped. */
+async function evaluateGate(deps: LoopDeps, gate: Gate, state: LoopState, attempts: number): Promise<"go" | "stop"> {
+  let answer: GateAnswer = "unknown";
+  let evidence = "No required facts were found within the call budget.";
+  if (anyFilled(gate, state.facts)) {
+    const j = await judge(deps, gate, state);
+    answer = j.answer;
+    evidence = j.evidence;
+  }
+  const source = gate.required_fields.map((f) => state.evidence[f]?.url).find(Boolean);
+  const result: GateResult = { id: gate.id, question: gate.question, answer, evidence, source_url: source, attempts, refs: refsFor(gate.required_fields, state.facts, state.evidence) };
+
+  if (answer === "fail") {
+    pushGate(state, result);
+    state.outcome = "drop";
+    state.dropReason = `${gate.id}_fail`;
+    return "stop";
+  }
+  if (answer === "unknown") {
+    const pol = gate.unknown_policy;
+    if (pol.type === "drop") {
+      result.policy_applied = "drop";
+      pushGate(state, result);
+      state.outcome = "drop";
+      state.dropReason = `${gate.id}_unresolved`;
+      return "stop";
+    }
+    if (pol.type === "qualify_and_flag") {
+      result.policy_applied = `qualify_and_flag:${pol.flag}`;
+      state.flags.push(pol.flag);
+    } else {
+      const held = pol.proxies.filter((p) => proxyHolds(p, state.facts));
+      if (held.length >= pol.min) {
+        result.policy_applied = `soft_pass:${held.map((p) => p.id).join("+")}`;
+        result.evidence += ` Soft pass on proxies: ${held.map((p) => p.id).join(", ")}.`;
+        state.flags.push(pol.flag);
+        state.softPass = true;
+      } else {
+        result.policy_applied = "drop";
+        pushGate(state, result);
+        state.outcome = "drop";
+        state.dropReason = `${gate.id}_unresolved`;
+        return "stop";
+      }
+    }
+  }
+  pushGate(state, result);
+  return "go";
 }

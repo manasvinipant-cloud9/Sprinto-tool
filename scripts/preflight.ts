@@ -2,7 +2,6 @@ import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { createLLM, modelFor } from "../lib/llm";
 import { hunterAccount } from "../lib/poc";
-import { checkGoogleAuth, sendTestEmail } from "../lib/send";
 
 let failures = 0;
 const line = (ok: boolean, name: string, detail = "") => {
@@ -24,7 +23,7 @@ function cli(cmd: string, args: string[]): string {
 
 async function main() {
   const provider = process.env.LLM_PROVIDER || "gemini";
-  const required = ["SEND_TO", "SENDER_NAME", "APP_PASSWORD", "HUNTER_API_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN", provider === "anthropic" ? "ANTHROPIC_API_KEY" : "GEMINI_API_KEY"];
+  const required = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_PUBLISHABLE_KEY", "SECRETS_KEY", "HUNTER_API_KEY", provider === "anthropic" ? "ANTHROPIC_API_KEY" : "GEMINI_API_KEY"];
   for (const name of required) line(Boolean(process.env[name]), `env ${name}`, process.env[name] ? "set" : "MISSING");
   if (required.some((n) => !process.env[n])) {
     console.log("\nStopping: fill in the missing values in .env.local, then run `npm run preflight` again.");
@@ -50,16 +49,6 @@ async function main() {
     const a = await hunterAccount();
     return `searches used=${a.used} available=${a.available}`;
   });
-  await step("Google refresh token exchanges for an access token", async () => {
-    await checkGoogleAuth();
-  });
-  if (!process.argv.includes("--no-send")) {
-    await step("Gmail sends one test email to SEND_TO", async () => {
-      const r = await sendTestEmail("[TEST] outreach-engine preflight", "If you can read this, Gmail sending works. No prospect was contacted.");
-      if (!r.ok) throw new Error(r.message);
-      return "check your inbox";
-    });
-  }
   await step("GitHub CLI logged in", async () => {
     cli("gh", ["auth", "status"]);
   });

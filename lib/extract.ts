@@ -11,6 +11,7 @@ export const BASE_FIELDS: { name: string; type: string; description: string }[] 
   { name: "funding_evidence", type: "string", description: "The exact fact that shows the funding stage (round, amount, date)." },
   { name: "headcount_min", type: "number", description: "Lower bound of employee count if stated." },
   { name: "headcount_max", type: "number", description: "Upper bound of employee count if stated." },
+  { name: "hq_region", type: "string", description: "Country or region where the company is headquartered, if stated." },
   { name: "industry", type: "string", description: "Industry in a few words (for example fintech, healthtech, devtools, hrtech, other)." },
   { name: "open_roles_count", type: "number", description: "Number of open roles if a careers page lists them." },
   { name: "enterprise_customers", type: "array of strings", description: "Names of recognisable enterprise customers shown." },

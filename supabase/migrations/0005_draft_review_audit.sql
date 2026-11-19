@@ -1,0 +1,15 @@
+alter table drafts add column if not exists generated_subject text;
+alter table drafts add column if not exists generated_body text;
+alter table drafts add column if not exists edited_at timestamptz;
+alter table drafts add column if not exists edit_count int not null default 0;
+alter table drafts add column if not exists tags text[] not null default '{}';
+alter table drafts add column if not exists reviewed_by_label text;
+alter table drafts add column if not exists approved_by_label text;
+alter table drafts add column if not exists updated_at timestamptz not null default now();
+alter table drafts add column if not exists tokens_in int not null default 0;
+alter table drafts add column if not exists tokens_out int not null default 0;
+alter table drafts add column if not exists source text not null default 'generated';
+alter table drafts drop constraint if exists drafts_source_check;
+alter table drafts add constraint drafts_source_check check (source in ('generated','regenerated','restored'));
+update drafts set generated_subject = subject, generated_body = body where generated_subject is null;
+create unique index if not exists drafts_one_current on drafts (account_id) where is_current;

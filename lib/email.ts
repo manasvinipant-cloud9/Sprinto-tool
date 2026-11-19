@@ -13,6 +13,8 @@ export async function draftEmail(
   facts: Facts,
   pains: Pain[],
   flagged: boolean,
+  /** A reviewer's note such as "make it shorter". The profile's rules and the lint still apply. */
+  instruction?: string,
 ): Promise<{ subject: string; body: string; lint: string[]; regenerations: number }> {
   const first = contact.name.split(" ")[0];
   const s = profile.seller;
@@ -34,6 +36,7 @@ export async function draftEmail(
         (cloud ? `They use ${cloud}; you may mention it once.\n` : "") +
         (flagged ? "The situation is UNCONFIRMED: phrase the opening hook as a question and do not claim it is true.\n" : "State the situation plainly in the opening sentence.\n") +
         `Rules: ${profile.email.min_words}-${profile.email.max_words} words in the body; subject at most ${profile.email.subject_max_words} words; start with "Hi ${first},"; end with a sign-off line "${s.sender_name}, ${s.sender_title}". Avoid: ${profile.email.banned_phrases.join(", ")}.\n` +
+        (instruction ? `A human reviewer asked for this change. Follow it where it does not break the rules above: ${instruction.slice(0, 300)}\n` : "") +
         (problems.length ? `Your previous draft failed these checks, fix them: ${problems.join("; ")}\n` : "") +
         `Return JSON: {"subject": "", "body": ""}`,
       schema,

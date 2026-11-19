@@ -7,7 +7,6 @@ import { loadProfile } from "@/lib/profiles";
 import { runDomain, normalizeDomain } from "@/lib/pipeline";
 import { pickContact } from "@/lib/poc";
 import { lintEmail } from "@/lib/lint";
-import { buildMime, sendTestEmail, recipient } from "@/lib/send";
 import { robotsAllows, cleanHtml } from "@/lib/scrape";
 import { parseNewsRss, Budget } from "@/lib/tools";
 import { runGates, isResolved, type LoopState } from "@/lib/gates";
@@ -168,13 +167,19 @@ describe("email lint", () => {
   });
 });
 
-describe("send safety", () => {
-  beforeEach(() => { process.env.SEND_TO = "me@example.test"; });
-  it("always addresses the configured recipient and accepts no recipient argument", () => {
-    expect(recipient()).toBe("me@example.test");
-    expect(buildMime.length).toBe(2);
-    expect(sendTestEmail.length).toBe(2);
-    expect(buildMime("Subject é", "Body").startsWith("To: me@example.test\r\n")).toBe(true);
+describe("no sending, by design", () => {
+  const walk = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.name === "node_modules" || e.name === ".next" ? [] : e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
+  const files = ["app", "components", "lib", "scripts"].flatMap((d) => walk(path.join(process.cwd(), d)));
+  it("has no module named send and no mail transport in source", () => {
+    expect(fs.existsSync(path.join(process.cwd(), "lib", "send.ts"))).toBe(false);
+    const banned = /gmail\.googleapis|messages\/send|nodemailer|smtp|sendgrid|mailgun|api\.resend|postmarkapp|GOOGLE_REFRESH_TOKEN/i;
+    const hits = files.filter((f) => /\.(ts|tsx)$/.test(f) && banned.test(fs.readFileSync(f, "utf8"))).map((f) => path.relative(process.cwd(), f));
+    expect(hits).toEqual([]);
+  });
+  it("ends every qualified run at a draft", async () => {
+    const r = await runDomain("acme.test", sprinto(), makeDeps(QUALIFYING));
+    expect(r.status).toBe("drafted");
+    expect("send" in r).toBe(false);
   });
 });
 
@@ -209,52 +214,40 @@ describe("scraping helpers", () => {
 });
 
 describe("pipeline", () => {
-  beforeEach(() => { process.env.SEND_TO = "me@example.test"; });
-
   it("normalises domains", () => {
     expect(normalizeDomain("https://www.Cal.com/pricing")).toBe("cal.com");
     expect(normalizeDomain("not a domain")).toBeNull();
   });
 
-  it("runs end to end and sends one test email with a review block", async () => {
-    const sent: { subject: string; body: string }[] = [];
-    const r = await runDomain("acme.test", sprinto(), { send: true }, makeDeps(QUALIFYING, { sent }));
-    expect(r.status).toBe("sent");
+  it("runs end to end and stops at a draft", async () => {
+    const r = await runDomain("acme.test", sprinto(), makeDeps(QUALIFYING));
+    expect(r.status).toBe("drafted");
     expect(r.contact?.name).toBe("Priya Rao");
     expect(r.score).toBeGreaterThan(0);
     expect(r.pains).toHaveLength(2);
-    expect(sent).toHaveLength(1);
-    expect(sent[0].subject).toContain("[TEST for Priya Rao, CTO, Acme]");
-    expect(sent[0].body).toContain("Would go to: priya@acme.test");
+    expect(r.email?.lint).toEqual([]);
     expect(r.profile.id).toBe("sprinto");
     expect(r.profile.hash).toHaveLength(12);
   });
 
-  it("drafts without sending when sending is off", async () => {
-    const sent: { subject: string; body: string }[] = [];
-    const r = await runDomain("acme.test", sprinto(), { send: false }, makeDeps(QUALIFYING, { sent }));
-    expect(r.status).toBe("drafted");
-    expect(sent).toHaveLength(0);
-  });
-
   it("reports qualified_no_poc instead of guessing a contact", async () => {
-    const r = await runDomain("acme.test", sprinto(), { send: true }, makeDeps({ ...QUALIFYING, contacts: [{ name: "X", email: "x@a", title: "CTO", confidence: 40 }] }));
+    const r = await runDomain("acme.test", sprinto(), makeDeps({ ...QUALIFYING, contacts: [{ name: "X", email: "x@a", title: "CTO", confidence: 40 }] }));
     expect(r.status).toBe("qualified_no_poc");
   });
 
   it("uses a manual override before Hunter", async () => {
-    const r = await runDomain("acme.test", sprinto(), { send: false }, makeDeps({ ...QUALIFYING, contacts: [], overrides: { "acme.test": { name: "Priya Rao", email: "p@acme.test", title: "CTO" } } }));
+    const r = await runDomain("acme.test", sprinto(), makeDeps({ ...QUALIFYING, contacts: [], overrides: { "acme.test": { name: "Priya Rao", email: "p@acme.test", title: "CTO" } } }));
     expect(r.status).toBe("drafted");
   });
 
   it("aborts the run on a permanent Hunter failure", async () => {
-    const r = await runDomain("acme.test", sprinto(), { send: true }, makeDeps({ ...QUALIFYING, hunterError: { message: "hunter_quota", permanent: true } }));
+    const r = await runDomain("acme.test", sprinto(), makeDeps({ ...QUALIFYING, hunterError: { message: "hunter_quota", permanent: true } }));
     expect(r.status).toBe("error");
     expect(r.reason.startsWith("abort:")).toBe(true);
   });
 
   it("degrades gracefully when the homepage is blocked", async () => {
-    const r = await runDomain("acme.test", sprinto(), { send: true }, makeDeps(QUALIFYING, { page: { status: "blocked", text: "", words: 0 } }));
+    const r = await runDomain("acme.test", sprinto(), makeDeps(QUALIFYING, { page: { status: "blocked", text: "", words: 0 } }));
     expect(r.status).toBe("error");
     expect(r.reason).toContain("homepage_blocked");
   });
@@ -263,7 +256,7 @@ describe("pipeline", () => {
     const deps = makeDeps(QUALIFYING);
     const bad = makeLLM(QUALIFYING);
     deps.llm = { usage: bad.usage, json: async (o) => (o.system.startsWith("You write short") ? o.schema.parse({ subject: "Hi", body: "Too short" }) : bad.json(o)) };
-    const r = await runDomain("acme.test", sprinto(), { send: true }, deps);
+    const r = await runDomain("acme.test", sprinto(), deps);
     expect(r.status).toBe("held");
   });
 
@@ -287,7 +280,7 @@ describe("pipeline", () => {
         return base.json(o);
       },
     };
-    const r = await runDomain("zeta.test", payroll, { send: false }, deps);
+    const r = await runDomain("zeta.test", payroll, deps);
     expect(r.status).toBe("drafted");
     expect(r.contact?.tier).toBe(1);
   });

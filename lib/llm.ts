@@ -1,7 +1,10 @@
 import { z } from "zod";
 
 export type Tier = "cheap" | "strong";
-export interface Usage { prompt: number; output: number; calls: number }
+/** Keys for one workspace. A missing key falls back to the server environment. */
+export interface LlmKeys { provider?: "gemini" | "anthropic"; gemini?: string; anthropic?: string }
+
+export interface Usage { prompt: number; output: number; calls: number; by_tier?: Record<string, { prompt: number; output: number }> }
 
 export interface LLM {
   json<T>(opts: { tier: Tier; system: string; prompt: string; schema: z.ZodType<T> }): Promise<T>;
@@ -22,23 +25,23 @@ function stripFences(s: string): string {
   return s.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
 }
 
-export function modelFor(tier: Tier): string {
-  const provider = process.env.LLM_PROVIDER || "gemini";
+export function modelFor(tier: Tier, providerOverride?: string): string {
+  const provider = providerOverride ?? (process.env.LLM_PROVIDER || "gemini");
   const fromEnv = tier === "cheap" ? process.env.LLM_MODEL_CHEAP : process.env.LLM_MODEL_STRONG;
   if (fromEnv) return fromEnv;
   if (provider === "anthropic") return tier === "cheap" ? "claude-haiku-5-5" : "claude-sonnet-5-5";
   return "gemini-2.5-flash";
 }
 
-async function callProvider(tier: Tier, system: string, prompt: string): Promise<{ text: string; inTok: number; outTok: number }> {
-  const provider = process.env.LLM_PROVIDER || "gemini";
-  const model = modelFor(tier);
+async function callProvider(tier: Tier, system: string, prompt: string, keys?: LlmKeys): Promise<{ text: string; inTok: number; outTok: number }> {
+  const provider = keys?.provider ?? (process.env.LLM_PROVIDER || "gemini");
+  const model = modelFor(tier, provider);
   if (provider === "anthropic") {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
+        "x-api-key": keys?.anthropic ?? process.env.ANTHROPIC_API_KEY ?? "",
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({ model, max_tokens: 2000, system, messages: [{ role: "user", content: prompt }] }),
@@ -49,7 +52,7 @@ async function callProvider(tier: Tier, system: string, prompt: string): Promise
   }
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY ?? "" },
+    headers: { "content-type": "application/json", "x-goog-api-key": keys?.gemini ?? process.env.GEMINI_API_KEY ?? "" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -65,7 +68,7 @@ async function callProvider(tier: Tier, system: string, prompt: string): Promise
   return { text, inTok: j.usageMetadata?.promptTokenCount ?? 0, outTok: j.usageMetadata?.candidatesTokenCount ?? 0 };
 }
 
-export function createLLM(onWait?: (ms: number, why: string) => void): LLM {
+export function createLLM(keys?: LlmKeys, onWait?: (ms: number, why: string) => void): LLM {
   const usage: Usage = { prompt: 0, output: 0, calls: 0 };
   return {
     usage,
@@ -74,10 +77,13 @@ export function createLLM(onWait?: (ms: number, why: string) => void): LLM {
       for (let attempt = 0; attempt < 4; attempt++) {
         try {
           await throttle();
-          const r = await callProvider(tier, system + "\nReturn valid JSON only, no commentary.", prompt);
+          const r = await callProvider(tier, system + "\nReturn valid JSON only, no commentary.", prompt, keys);
           usage.calls++;
           usage.prompt += r.inTok;
           usage.output += r.outTok;
+          const bt = (usage.by_tier ??= {});
+          const t = (bt[modelFor(tier)] ??= { prompt: 0, output: 0 });
+          t.prompt += r.inTok; t.output += r.outTok;
           return schema.parse(JSON.parse(stripFences(r.text)));
         } catch (e) {
           lastErr = e;
