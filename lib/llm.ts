@@ -30,7 +30,8 @@ export function modelFor(tier: Tier, providerOverride?: string): string {
   const fromEnv = tier === "cheap" ? process.env.LLM_MODEL_CHEAP : process.env.LLM_MODEL_STRONG;
   if (fromEnv) return fromEnv;
   if (provider === "anthropic") return tier === "cheap" ? "claude-haiku-5-5" : "claude-sonnet-5-5";
-  return "gemini-2.5-flash";
+  // gemini-2.5-flash is retired. These are current stable models (checked against Google's model list); override with LLM_MODEL_CHEAP / LLM_MODEL_STRONG.
+  return tier === "cheap" ? "gemini-3.5-flash-lite" : "gemini-3.8-flash";
 }
 
 async function callProvider(tier: Tier, system: string, prompt: string, keys?: LlmKeys): Promise<{ text: string; inTok: number; outTok: number }> {
