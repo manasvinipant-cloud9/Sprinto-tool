@@ -8,7 +8,7 @@ const fmt = (n: number) => n.toLocaleString();
 const usd = (n: number) => (n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
 
 export function RunTab() {
-  const { profiles, status, error, setError, setTab, createRun, activeRun, driving, drive, controlRun, runs, setActiveRunId, setSelected, deleteRun } = useWorkspace();
+  const { profiles, status, error, setError, setTab, createRun, activeRun, driving, drive, controlRun, runs, setActiveRunId, setSelected, deleteRun, demo } = useWorkspace();
   const [profileId, setProfileId] = useState(() => { try { return localStorage.getItem("outreach:profile") ?? ""; } catch { return ""; } });
   const [text, setText] = useState("");
   const [starting, setStarting] = useState(false);
@@ -78,7 +78,7 @@ export function RunTab() {
           </div>
 
           <div className="row">
-            <button className="primary" onClick={go} disabled={starting || readonly || parsed.valid.length === 0 || !profile}>{starting ? "Starting…" : willRun > 1 ? `Start run (${willRun} accounts)` : "Start run"}</button>
+            <button className="primary" onClick={go} disabled={starting || readonly || demo || parsed.valid.length === 0 || !profile}>{demo ? "Starting runs is off in the demo" : starting ? "Starting…" : willRun > 1 ? `Start run (${willRun} accounts)` : "Start run"}</button>
           </div>
           {error && <div className="err" role="alert">{error}</div>}
         </section>

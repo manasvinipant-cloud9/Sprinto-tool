@@ -4,7 +4,7 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { installConsoleScrubber, safeError, scrub } from "@/lib/scrub";
 import { decryptSecret, encryptSecret, keyHint, secretsAvailable } from "@/lib/secrets";
-import { csrfOk } from "@/lib/guard";
+import { csrfOk, demoBlocks, isDemoUser } from "@/lib/guard";
 import { loginBlocked, loginFailed, loginOk } from "@/lib/session";
 
 const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.name === "node_modules" || e.name === ".next" ? [] : e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
@@ -109,9 +109,37 @@ describe("request guards", () => {
   });
 });
 
+describe("the read-only demo", () => {
+  it("refuses every change, and closes pages that list people, keys or the audit trail", () => {
+    for (const m of ["POST", "PATCH", "PUT", "DELETE"]) expect(demoBlocks(m, "/api/runs")).toMatch(/read-only/);
+    expect(demoBlocks("POST", "/api/runs/abc/tick")).toMatch(/read-only/); // no model or contact calls can be started
+    expect(demoBlocks("GET", "/api/members")).toMatch(/Not available/);
+    expect(demoBlocks("GET", "/api/audit")).toMatch(/Not available/);
+    expect(demoBlocks("GET", "/api/keys")).toMatch(/Not available/);
+  });
+  it("lets the demo look at everything else", () => {
+    for (const p of ["/api/runs", "/api/runs/abc", "/api/accounts/abc", "/api/profiles", "/api/compare", "/api/runs/abc/review", "/api/runs/abc/export"]) expect(demoBlocks("GET", p)).toBeNull();
+  });
+  it("only the configured demo user is treated as the demo", () => {
+    const old = process.env.DEMO_USER_ID;
+    try {
+      delete process.env.DEMO_USER_ID; expect(isDemoUser("anything")).toBe(false);
+      process.env.DEMO_USER_ID = "u-1"; expect(isDemoUser("u-1")).toBe(true); expect(isDemoUser("u-2")).toBe(false);
+    } finally { if (old === undefined) delete process.env.DEMO_USER_ID; else process.env.DEMO_USER_ID = old; }
+  });
+  it("is checked before any workspace work, in the shared guard", () => {
+    const text = read("lib/guard.ts");
+    expect(text.indexOf("isDemoUser(user.id)")).toBeGreaterThan(0);
+    expect(text.indexOf("isDemoUser(user.id)")).toBeLessThan(text.indexOf("membershipsFor(user.id, s.at);\n  if (ms.length === 0)"));
+  });
+  it("never puts the demo password anywhere the browser can see", () => {
+    expect(src("components", "app").filter((f) => /DEMO_PASSWORD/.test(read(f)) && !f.endsWith("auth/demo/route.ts")).map(rel)).toEqual([]);
+  });
+});
+
 describe("the code keeps its boundaries", () => {
   it("every API route checks the session, except the sign-in ones", () => {
-    const open = new Set(["app/api/auth/login/route.ts", "app/api/auth/logout/route.ts", "app/api/auth/refresh/route.ts", "app/api/session/route.ts", "app/api/workspaces/select/route.ts"]);
+    const open = new Set(["app/api/auth/login/route.ts", "app/api/auth/demo/route.ts", "app/api/auth/logout/route.ts", "app/api/auth/refresh/route.ts", "app/api/session/route.ts", "app/api/workspaces/select/route.ts"]);
     const routes = walk(path.join(process.cwd(), "app/api")).filter((f) => f.endsWith("route.ts"));
     expect(routes.length).toBeGreaterThan(20);
     const unguarded = routes.filter((f) => !open.has(rel(f)) && !/withAuth\(/.test(read(f))).map(rel);

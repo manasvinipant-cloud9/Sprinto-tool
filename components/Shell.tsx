@@ -10,7 +10,7 @@ import { SystemTab } from "./SystemTab";
 import { useWorkspace, type TabId } from "./workspace";
 
 export function Shell() {
-  const { authed, booting, tab, setTab, driving, activeRun, signIn, signOut, error, theme, setTheme, user, workspaces, current, noWorkspace, switchWorkspace } = useWorkspace();
+  const { authed, booting, tab, setTab, driving, activeRun, signIn, signOut, error, theme, setTheme, user, demo, workspaces, current, noWorkspace, switchWorkspace } = useWorkspace();
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [busy, setBusy] = useState(false);
@@ -57,10 +57,11 @@ export function Shell() {
             )}
             <span className="badge info plain" title="The app never sends email">Draft only</span>
             <button className="ghost small" aria-label="Toggle theme" onClick={() => setTheme(dark ? "light" : "dark")}>{dark ? "☀" : "☾"}</button>
-            {authed && user && <button className="ghost small" onClick={() => void signOut()} title={user.email}>Sign out</button>}
+            {authed && user && (demo ? <button className="ghost small" onClick={() => void signOut()}>Owner sign-in</button> : <button className="ghost small" onClick={() => void signOut()} title={user.email}>Sign out</button>)}
           </div>
         </div>
       </header>
+      {authed && demo && <div className="demo-bar" role="note"><strong>Read-only demo.</strong> You are looking at real sample runs. Nothing here can be changed, and nothing is ever sent. Owners sign in with the button at the top right.</div>}
       <main className="shell">
         {booting ? (
           <div className="panel empty login">Loading…</div>

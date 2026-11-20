@@ -40,7 +40,7 @@ export function domainsFromCsv(csv: string): string {
 
 interface Ctx {
   authed: boolean; booting: boolean; error: string | null; setError: (e: string | null) => void;
-  user: SessionUser | null; workspaces: WorkspaceRef[]; current: WorkspaceRef | null; noWorkspace: boolean;
+  user: SessionUser | null; demo: boolean; workspaces: WorkspaceRef[]; current: WorkspaceRef | null; noWorkspace: boolean;
   signIn: (email: string, password: string) => Promise<void>; signOut: () => Promise<void>;
   switchWorkspace: (id: string) => Promise<void>; createWorkspace: (name: string) => Promise<void>; refreshSession: () => Promise<void>;
   api: <T = unknown>(path: string, init?: RequestInit) => Promise<T>;
@@ -69,6 +69,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [authed, setAuthed] = useState(false);
   const [booting, setBooting] = useState(true);
   const [user, setUser] = useState<SessionUser | null>(null);
+  const [demo, setDemo] = useState(false);
   const [workspaces, setWorkspaces] = useState<WorkspaceRef[]>([]);
   const [current, setCurrent] = useState<WorkspaceRef | null>(null);
   const [noWorkspace, setNoWorkspace] = useState(false);
@@ -129,13 +130,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /** Reads who is signed in and which workspace is active. Returns false when there is no session. */
-  const refreshSession = useCallback(async () => {
+  const refreshSession = useCallback(async (allowDemo = true): Promise<void> => {
     try {
       const res = await fetchRaw("/api/session");
-      if (!res.ok) { setAuthed(false); setUser(null); setWorkspaces([]); setCurrent(null); return; }
-      const b = (await res.json()) as { user: SessionUser; workspaces: { workspaceId: string; name: string; role: "owner" | "member" }[]; current: WorkspaceRef | null };
-      setUser(b.user); setWorkspaces(b.workspaces.map((w) => ({ id: w.workspaceId, name: w.name, role: w.role })));
+      if (!res.ok) {
+        setAuthed(false); setUser(null); setWorkspaces([]); setCurrent(null); setDemo(false);
+        // First visit: open the read-only demo, unless the visitor chose to sign in as themselves.
+        let skip = false; try { skip = sessionStorage.getItem("outreach:no-demo") === "1"; } catch { /* ignore */ }
+        if (allowDemo && !skip) {
+          const d = await fetch("/api/auth/demo", { method: "POST", credentials: "same-origin", headers: HEADERS });
+          if (d.ok) { await refreshSession(false); return; }
+        }
+        return;
+      }
+      const b = (await res.json()) as { user: SessionUser; demo?: boolean; workspaces: { workspaceId: string; name: string; role: "owner" | "member" }[]; current: WorkspaceRef | null };
+      setUser(b.user); setDemo(Boolean(b.demo)); setWorkspaces(b.workspaces.map((w) => ({ id: w.workspaceId, name: w.name, role: w.role })));
       setCurrent(b.current); setNoWorkspace(!b.current); setAuthed(true);
+      if (b.demo) { try { if (!window.location.hash) setTabState("results"); } catch { /* ignore */ } }
       if (b.current) {
         try { const last = localStorage.getItem(`outreach:active-run:${b.current.id}`); if (last) setActiveRunIdState(last); } catch { /* ignore */ }
         const p = await fetchRaw("/api/profiles"); if (p.ok) setProfiles(((await p.json()) as { profiles: ProfileInfo[] }).profiles);
@@ -149,12 +160,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const res = await fetchRaw("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
     const b = await res.json().catch(() => ({}));
     if (!res.ok) { setError((b as { error?: string }).error ?? "Could not sign in."); return; }
-    await refreshSession();
+    try { sessionStorage.removeItem("outreach:no-demo"); } catch { /* ignore */ }
+    await refreshSession(false);
   }, [fetchRaw, refreshSession]);
 
   const signOut = useCallback(async () => {
+    try { sessionStorage.setItem("outreach:no-demo", "1"); } catch { /* ignore */ }
     await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin", headers: HEADERS }).catch(() => undefined);
-    resetWorkspaceState(); setAuthed(false); setUser(null); setWorkspaces([]); setCurrent(null);
+    resetWorkspaceState(); setAuthed(false); setUser(null); setDemo(false); setWorkspaces([]); setCurrent(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetWorkspaceState]);
 
@@ -207,6 +220,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     })();
     return () => { cancelled = true; };
   }, [authed, activeRunId, loadRun, refreshRuns, driving, activeRun?.status]);
+
+  // Nothing open yet: show the newest run, so a first visit lands on real results.
+  useEffect(() => {
+    if (!authed || activeRunId || runs.length === 0) return;
+    setActiveRunIdState(runs[0].id);
+  }, [authed, activeRunId, runs]);
 
   const setSelected = useCallback((accountId: string | null) => { setSelectedState(accountId); setDetail(null); }, []);
   const selectedStage = activeRun?.accounts.find((a) => a.id === selected)?.stage;
@@ -283,7 +302,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     void refreshRuns();
   }, [activeRunId, api, refreshRuns, setActiveRunId]);
 
-  const value = useMemo<Ctx>(() => ({ authed, booting, error, setError, user, workspaces, current, noWorkspace, signIn, signOut, switchWorkspace, createWorkspace, refreshSession, api, fetchRaw, profiles, refreshProfiles, status, refreshStatus, tab, setTab, runs, refreshRuns, activeRunId, setActiveRunId, activeRun, createRun, controlRun, deleteRun, driving, drive, driveMany, selected, setSelected, detail, detailLoading, toast, notify, theme, setTheme }),
-    [authed, booting, error, user, workspaces, current, noWorkspace, signIn, signOut, switchWorkspace, createWorkspace, refreshSession, api, fetchRaw, profiles, refreshProfiles, status, refreshStatus, tab, setTab, runs, refreshRuns, activeRunId, setActiveRunId, activeRun, createRun, controlRun, deleteRun, driving, drive, driveMany, selected, setSelected, detail, detailLoading, toast, notify, theme, setTheme]);
+  const value = useMemo<Ctx>(() => ({ authed, booting, error, setError, user, demo, workspaces, current, noWorkspace, signIn, signOut, switchWorkspace, createWorkspace, refreshSession, api, fetchRaw, profiles, refreshProfiles, status, refreshStatus, tab, setTab, runs, refreshRuns, activeRunId, setActiveRunId, activeRun, createRun, controlRun, deleteRun, driving, drive, driveMany, selected, setSelected, detail, detailLoading, toast, notify, theme, setTheme }),
+    [authed, booting, error, user, demo, workspaces, current, noWorkspace, signIn, signOut, switchWorkspace, createWorkspace, refreshSession, api, fetchRaw, profiles, refreshProfiles, status, refreshStatus, tab, setTab, runs, refreshRuns, activeRunId, setActiveRunId, activeRun, createRun, controlRun, deleteRun, driving, drive, driveMany, selected, setSelected, detail, detailLoading, toast, notify, theme, setTheme]);
   return <WorkspaceCtx.Provider value={value}>{children}{toast && <div className="toast" role="status">{toast}</div>}</WorkspaceCtx.Provider>;
 }

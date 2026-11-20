@@ -126,7 +126,7 @@ function Audit() {
 }
 
 export function SystemTab() {
-  const { status, refreshStatus, theme, setTheme, signOut, current, user, api, createWorkspace, notify, refreshSession } = useWorkspace();
+  const { status, refreshStatus, theme, setTheme, signOut, current, user, demo, api, createWorkspace, notify, refreshSession } = useWorkspace();
   const owner = current?.role === "owner";
   const [newName, setNewName] = useState("");
   const [rename, setRename] = useState(current?.name ?? "");
@@ -157,8 +157,8 @@ export function SystemTab() {
               <button onClick={() => void doRename()} disabled={!rename.trim() || rename.trim() === current?.name}>Rename</button>
             </div>
           )}
-          <Members owner={owner} />
-          {owner && (
+          {!demo && <Members owner={owner} />}
+          {owner && !demo && (
             <>
               <h3>Add a workspace (for example a new client)</h3>
               <div className="row tight" style={{ marginTop: 0 }}>
@@ -170,7 +170,7 @@ export function SystemTab() {
           {err && <div className="err" role="alert">{err}</div>}
         </section>
 
-        <section className="panel"><Keys owner={owner} /></section>
+        {!demo && <section className="panel"><Keys owner={owner} /></section>}
 
         <section className="panel">
           <div className="panel-head"><h2>Connections</h2></div>
@@ -186,7 +186,7 @@ export function SystemTab() {
           )}
         </section>
 
-        <section className="panel"><Audit /></section>
+        {!demo && <section className="panel"><Audit /></section>}
 
         <section className="panel">
           <div className="panel-head"><h2>Guard rails</h2></div>

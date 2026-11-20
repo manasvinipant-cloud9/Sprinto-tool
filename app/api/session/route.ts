@@ -1,4 +1,4 @@
-import { membershipsFor } from "@/lib/guard";
+import { isDemoUser, membershipsFor } from "@/lib/guard";
 import { readSession, verifyToken } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -11,5 +11,5 @@ export async function GET() {
   if (!user) return Response.json({ error: "Your session expired.", code: "expired" }, { status: 401 });
   const ms = await membershipsFor(user.id, s.at);
   const current = ms.find((m) => m.workspaceId === s.ws) ?? ms[0] ?? null;
-  return Response.json({ user, workspaces: ms, current: current ? { id: current.workspaceId, name: current.name, role: current.role } : null });
+  return Response.json({ user: isDemoUser(user.id) ? { ...user, email: "Demo visitor" } : user, demo: isDemoUser(user.id), workspaces: ms, current: current ? { id: current.workspaceId, name: current.name, role: current.role } : null });
 }

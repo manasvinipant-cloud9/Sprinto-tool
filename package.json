@@ -17,6 +17,7 @@
     "phase6-check": "node --env-file=.env.local --import tsx scripts/phase6-check.ts",
     "bundle-check": "node --env-file=.env.local --import tsx scripts/bundle-check.ts",
     "phase6-http-check": "node --env-file=.env.local --import tsx scripts/phase6-http-check.ts",
+    "setup-demo": "node --env-file=.env.local --import tsx scripts/setup-demo.ts",
     "worker": "node --env-file=.env.local --import tsx scripts/worker.ts",
     "preflight": "node --env-file=.env.local --import tsx scripts/preflight.ts"
   },
