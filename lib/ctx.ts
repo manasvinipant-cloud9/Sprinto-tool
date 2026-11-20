@@ -10,6 +10,8 @@ export interface Ctx {
   db: SupabaseClient;         // signed-in users get a client that Postgres row-level security applies to
   accessToken: string | null;
   isService: boolean;
+  /** True for the public read-only demo user, whose view hides real people's email addresses. */
+  demo?: boolean;
 }
 
 const store = new AsyncLocalStorage<Ctx>();

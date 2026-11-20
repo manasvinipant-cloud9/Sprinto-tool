@@ -5,6 +5,7 @@ import { audit } from "../audit";
 import { safeError } from "../scrub";
 import { resolveKeys, type ResolvedKeys } from "./workspace";
 import { overridesMap } from "./overrides";
+import { maskEmail, maskResult } from "../mask";
 import { createLLM, normalizeDomain, realDeps, runDomain, type Deps, type Stage } from "../pipeline";
 import { estimateCostUsd } from "../pricing";
 import type { Profile } from "../profile-schema";
@@ -78,6 +79,7 @@ export async function getRun(runId: string): Promise<RunDetail> {
     .select("id, domain, position, stage, qualification, score, reason, loop_steps, fetches, searches, tokens_in, tokens_out, est_cost_usd, started_at, finished_at, result, drafts(id, review_status, is_current)")
     .eq("run_id", runId).eq("workspace_id", currentWorkspaceId()).order("position"), "load accounts");
   const accounts = accts.map(toBrief);
+  if (currentCtx().demo) for (const a of accounts) if (a.brief?.contact) a.brief.contact = { ...a.brief.contact, email: maskEmail(a.brief.contact.email) };
   const done = accounts.filter((a) => !["queued", ...IN_FLIGHT].includes(a.stage)).length;
   return {
     id: run.id, status: run.status, note: run.note, created_at: run.created_at, started_at: run.started_at, finished_at: run.finished_at, comparison_group: run.comparison_group ?? null,
@@ -120,7 +122,8 @@ export async function getTrace(accountId: string): Promise<TraceStep[]> {
 export async function getAccountResult(accountId: string): Promise<DomainResult | null> {
   const row = must<{ result: DomainResult | null }>(await db().from("run_accounts").select("result").eq("id", accountId).eq("workspace_id", currentWorkspaceId()).single(), "load account");
   if (!row.result) return null;
-  return { ...row.result, trace: await getTrace(accountId) };
+  const full = { ...row.result, trace: await getTrace(accountId) };
+  return currentCtx().demo ? maskResult(full) : full;
 }
 
 // ---------- executing ----------
@@ -285,7 +288,7 @@ export async function exportRunCsv(runId: string, scope: "all" | "qualified" = "
   await audit("export.shortlist", { type: "run", id: runId }, { scope });
   return buildShortlistCsv(rows.map((r) => ({
     domain: r.domain as string, position: Number(r.position), stage: r.stage as string, qualification: (r.qualification as string | null) ?? null,
-    score: (r.score as number | null) ?? null, reason: (r.reason as string | null) ?? null, result: (r.result as DomainResult | null) ?? null,
+    score: (r.score as number | null) ?? null, reason: (r.reason as string | null) ?? null, result: r.result ? (currentCtx().demo ? maskResult(r.result as DomainResult) : (r.result as DomainResult)) : null,
     draftStatus: ((r.drafts as { review_status: string; is_current: boolean }[] | null) ?? []).find((d) => d.is_current)?.review_status ?? null,
   })), scope);
 }

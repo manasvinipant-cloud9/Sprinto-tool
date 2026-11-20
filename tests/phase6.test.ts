@@ -6,6 +6,7 @@ import { installConsoleScrubber, safeError, scrub } from "@/lib/scrub";
 import { decryptSecret, encryptSecret, keyHint, secretsAvailable } from "@/lib/secrets";
 import { csrfOk, demoBlocks, isDemoUser } from "@/lib/guard";
 import { loginBlocked, loginFailed, loginOk } from "@/lib/session";
+import { maskEmail } from "@/lib/mask";
 
 const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.name === "node_modules" || e.name === ".next" ? [] : e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
 const read = (f: string) => fs.readFileSync(f, "utf8");
@@ -131,6 +132,13 @@ describe("the read-only demo", () => {
     const text = read("lib/guard.ts");
     expect(text.indexOf("isDemoUser(user.id)")).toBeGreaterThan(0);
     expect(text.indexOf("isDemoUser(user.id)")).toBeLessThan(text.indexOf("membershipsFor(user.id, s.at);\n  if (ms.length === 0)"));
+  });
+  it("hides real people's email addresses from demo visitors", () => {
+    expect(maskEmail("priya.rao@acme.com")).toBe("p***@acme.com");
+    expect(maskEmail("not an email")).toBe("***");
+    expect(maskEmail("a@b.co")).toBe("a***@b.co");
+    const services = ["lib/services/runs.ts", "lib/services/drafts.ts"].map(read).join("\n");
+    expect((services.match(/Ctx\(\)\.demo/g) ?? []).length).toBeGreaterThanOrEqual(5); // briefs, full result, shortlist export, review queue, approved export
   });
   it("never puts the demo password anywhere the browser can see", () => {
     expect(src("components", "app").filter((f) => /DEMO_PASSWORD/.test(read(f)) && !f.endsWith("auth/demo/route.ts")).map(rel)).toEqual([]);

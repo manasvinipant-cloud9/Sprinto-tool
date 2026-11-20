@@ -54,7 +54,7 @@ export async function authenticate(req: Request, opts: { owner?: boolean } = {})
   if (ms.length === 0) return Response.json({ error: "You are not a member of any workspace. Ask a workspace owner to add you.", code: "no_workspace" }, { status: 403 });
   const chosen = ms.find((m) => m.workspaceId === s.ws) ?? ms[0];
   if (opts.owner && chosen.role !== "owner") return Response.json({ error: "Only a workspace owner can do that." }, { status: 403 });
-  return { userId: user.id, email: user.email, workspaceId: chosen.workspaceId, role: chosen.role, db: userDb(s.at), accessToken: s.at, isService: false };
+  return { userId: user.id, email: user.email, workspaceId: chosen.workspaceId, role: chosen.role, db: userDb(s.at), accessToken: s.at, isService: false, demo: isDemoUser(user.id) };
 }
 
 /** Wraps a route handler: checks the session, workspace and CSRF header, then runs it inside that workspace's context. */

@@ -2,6 +2,7 @@ import { db, must } from "../db";
 import { currentCtx, currentWorkspaceId } from "../ctx";
 import { audit } from "../audit";
 import { resolveKeys } from "./workspace";
+import { maskEmail } from "../mask";
 import { draftEmail } from "../email";
 import { buildApprovedDraftsCsv, type ApprovedDraft } from "../export";
 import { createLLM, type Deps } from "../pipeline";
@@ -55,7 +56,7 @@ export async function listReview(runId: string): Promise<ReviewItem[]> {
     return {
       accountId: r.id as string, domain: r.domain as string, company: (res?.facts.company_name as string | null) || (r.domain as string), position: Number(r.position), stage: r.stage as string,
       score: (r.score as number | null) ?? null, flags: res?.flags ?? [], reason: (r.reason as string | null) ?? null,
-      contact: res?.contact ? { name: res.contact.name, title: res.contact.title, email: res.contact.email, tier: res.contact.tier } : null,
+      contact: res?.contact ? { name: res.contact.name, title: res.contact.title, email: currentCtx().demo ? maskEmail(res.contact.email) : res.contact.email, tier: res.contact.tier } : null,
       draft: cur ? view(cur, all.length) : null,
     };
   });
@@ -190,7 +191,7 @@ export async function approvedDrafts(runId: string): Promise<ApprovedDraft[]> {
     const res = r.result as DomainResult | null;
     out.push({
       position: Number(r.position), company: (res?.facts.company_name as string | null) || (r.domain as string), domain: r.domain as string, score: (r.score as number | null) ?? null,
-      contactName: res?.contact?.name ?? "", contactTitle: res?.contact?.title ?? "", contactEmail: res?.contact?.email ?? "",
+      contactName: res?.contact?.name ?? "", contactTitle: res?.contact?.title ?? "", contactEmail: res?.contact?.email ? (currentCtx().demo ? maskEmail(res.contact.email) : res.contact.email) : "",
       subject: d.subject, body: d.body, notes: d.notes ?? "", tags: d.tags ?? [], version: d.version, edited: d.subject !== (d.generated_subject ?? d.subject) || d.body !== (d.generated_body ?? d.body),
       lintOverridden: d.lint_overridden, approvedBy: d.approved_by_label ?? "", approvedAt: d.approved_at ?? "", profile: `${run.profiles.name} v${run.profiles.version}`,
     });
